@@ -1,4 +1,3 @@
-# app.py (SIMPLIFIED AI LAYOUT ANIMATOR)
 import streamlit as st
 import numpy as np
 import imageio
@@ -11,7 +10,7 @@ import io
 import requests
 
 # Set page config
-st.set_page_config(page_title="AI Layout Animator", layout="centered")
+st.set_page_config(page_title="Typing Animation Creator", layout="centered")
 
 # Simple styling
 st.markdown("""
@@ -22,189 +21,215 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ------------- Simple Layout Engine -------------
-class SimpleLayoutEngine:
-    def analyze_layout(self, text, logo_size, screen_width, screen_height):
-        """Simple rule-based layout analysis"""
-        text_length = len(text)
-        
-        if text_length < 50:
-            return {
-                "logo_position": "top_center",
-                "font_size": min(100, screen_height // 10),
-                "text_start_y": 200,
-                "line_spacing": 1.4
-            }
-        else:
-            return {
-                "logo_position": "top_left", 
-                "font_size": min(70, screen_height // 12),
-                "text_start_y": 150,
-                "line_spacing": 1.6
-            }
+# ================================
+# 🎨 Brand Colors (from your concept)
+# ================================
+GOLD_LIGHT = (245, 215, 140)
+ESPRESSO = (45, 38, 30)
+TEXT_COLOR = (250, 245, 230)
 
-# ------------- Logo Handler -------------
-def load_logo():
-    """Load logo with fallback"""
-    try:
-        logo_url = "https://ik.imagekit.io/ericmwangi/smlogo.png?updatedAt=1763071173037"
-        response = requests.get(logo_url)
-        logo_image = Image.open(io.BytesIO(response.content))
-        if logo_image.mode != 'RGBA':
-            logo_image = logo_image.convert('RGBA')
-        return logo_image.resize((120, 60), Image.Resampling.LANCZOS)
-    except:
-        # Create simple fallback logo
-        img = Image.new('RGBA', (120, 60), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([5, 15, 115, 45], fill=(255, 215, 0, 180))
-        draw.text((15, 20), "BRAND", fill=(0, 0, 0, 255))
-        return img
-
-# ------------- Frame Generator -------------
-class FrameGenerator:
-    def __init__(self):
-        self.layout_engine = SimpleLayoutEngine()
-        self.logo = load_logo()
+# ================================
+# ✍️ Text Wrapping Function
+# ================================
+def wrap_text(text, font, max_width, draw):
+    """Wrap text to fit within max_width"""
+    words = text.split()
+    lines = []
+    current_line = []
     
-    def create_frame(self, text, progress, frame_idx, total_frames, width, height, text_color="#FFD700"):
-        """Create animated frame"""
+    for word in words:
+        current_line.append(word)
+        test_line = ' '.join(current_line)
+        
+        # Estimate width (simpler than textbbox for compatibility)
+        line_width = len(test_line) * font.size // 2
+        
+        if line_width > max_width:
+            if len(current_line) == 1:
+                lines.append(word)
+                current_line = []
+            else:
+                current_line.pop()
+                lines.append(' '.join(current_line))
+                current_line = [word]
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    return lines
+
+# ================================
+# 🖼️ Background Generator
+# ================================
+def create_background(width, height, time_progress):
+    """Create animated background with waves"""
+    bg = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Base espresso color
+    bg[:, :] = [ESPRESSO[0], ESPRESSO[1], ESPRESSO[2]]
+    
+    # Add gold wave lines
+    for y in range(0, height, 25):
+        phase = (y * 0.04 + time_progress * 2) % (2 * math.pi)
+        opacity = int(25 * (1 + math.sin(phase)) / 2)
+        wave_y = y + 3 * math.sin(phase)
+        
+        if 0 <= wave_y < height:
+            # Blend gold color with background
+            for x in range(width):
+                if x % 2 == 0:  # Optimize performance
+                    bg[int(wave_y), x] = [
+                        min(255, ESPRESSO[0] + GOLD_LIGHT[0] * opacity // 255),
+                        min(255, ESPRESSO[1] + GOLD_LIGHT[1] * opacity // 255),
+                        min(255, ESPRESSO[2] + GOLD_LIGHT[2] * opacity // 255)
+                    ]
+    
+    return bg
+
+# ================================
+# 🎞️ Frame Generator with Typing Effect
+# ================================
+class TypingFrameGenerator:
+    def __init__(self):
+        self.logo = self.load_logo()
+    
+    def load_logo(self):
+        """Load logo from URL with fallback"""
+        try:
+            logo_url = "https://ik.imagekit.io/ericmwangi/smlogo.png?updatedAt=1763071173037"
+            response = requests.get(logo_url)
+            logo_image = Image.open(io.BytesIO(response.content))
+            if logo_image.mode != 'RGBA':
+                logo_image = logo_image.convert('RGBA')
+            return logo_image.resize((120, 60), Image.Resampling.LANCZOS)
+        except:
+            # Create simple fallback logo
+            img = Image.new('RGBA', (120, 60), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([5, 15, 115, 45], fill=(*GOLD_LIGHT, 180))
+            draw.text((15, 20), "BRAND", fill=(0, 0, 0, 255))
+            return img
+    
+    def create_frame(self, text, progress, frame_idx, total_frames, width, height):
+        """Create frame with typing animation"""
         # Generate background
-        bg = self.generate_background(width, height, frame_idx, total_frames)
-        img = Image.fromarray(bg)
+        time_progress = frame_idx / total_frames
+        bg_array = create_background(width, height, time_progress)
+        img = Image.fromarray(bg_array)
         draw = ImageDraw.Draw(img)
         
         # Add logo
         if self.logo:
-            img = self.add_logo(img, self.logo)
+            logo_x = (width - self.logo.width) // 2
+            logo_y = int(height * 0.07)
+            img.paste(self.logo, (logo_x, logo_y), self.logo)
         
-        # Setup text
-        layout = self.layout_engine.analyze_layout(text, self.logo.size, width, height)
-        font_size = layout["font_size"]
-        
+        # Typing animation logic
+        font_size = min(72, height // 15)
         try:
             font = ImageFont.truetype("arial.ttf", font_size)
         except:
             font = ImageFont.load_default()
         
-        # Break text and apply animation
-        lines = self.break_text(text, font, width - 100)
-        animated_lines = self.apply_animation(lines, progress)
+        # Apply typing effect
+        animated_text = self.apply_typing_effect(text, font, draw, width, progress)
         
-        # Draw text
-        self.draw_text(draw, animated_lines, font, layout, width, text_color)
+        # Draw the animated text
+        self.draw_animated_text(draw, animated_text, font, width, height, progress)
         
         return np.array(img)
     
-    def generate_background(self, width, height, frame_idx, total_frames):
-        """Generate animated gradient background"""
-        bg = np.zeros((height, width, 3), dtype=np.uint8)
-        time_progress = frame_idx / total_frames
+    def apply_typing_effect(self, full_text, font, draw, width, progress):
+        """Apply typing reveal effect to text"""
+        max_width = int(width * 0.85)
         
-        for y in range(height):
-            progress = y / height
-            r = int(15 + progress * 100 + math.sin(time_progress * 5) * 10)
-            g = int(12 + progress * 80 + math.cos(time_progress * 4) * 8)
-            b = int(41 + progress * 40)
-            
-            bg[y, :] = [r, g, b]
+        # First, wrap the full text to get line structure
+        lines = wrap_text(full_text, font, max_width, draw)
         
-        return bg
-    
-    def add_logo(self, frame, logo):
-        """Add logo to top center"""
-        try:
-            frame_rgba = frame.convert('RGBA')
-            logo_rgba = logo.convert('RGBA')
-            
-            # Simple logo placement at top center
-            x = (frame.width - logo.width) // 2
-            y = 40
-            
-            frame_rgba.paste(logo_rgba, (x, y), logo_rgba)
-            return frame_rgba.convert('RGB')
-        except:
-            return frame
-    
-    def break_text(self, text, font, max_width):
-        """Break text into lines"""
-        words = text.split()
-        lines = []
-        current_line = []
+        # Typing timeline: 70% for typing, 30% hold
+        typing_duration = 0.7
+        hold_duration = 0.3
         
-        for word in words:
-            current_line.append(word)
-            test_line = ' '.join(current_line)
+        if progress <= typing_duration:
+            # Calculate how much text to reveal
+            typing_progress = progress / typing_duration
+            total_chars = sum(len(line) for line in lines)
+            chars_to_show = int(total_chars * typing_progress)
             
-            # Estimate width
-            line_width = len(test_line) * font.size // 2
-            
-            if line_width > max_width:
-                if len(current_line) == 1:
-                    lines.append(word)
-                    current_line = []
+            # Rebuild text with partial reveal
+            shown_lines = []
+            chars_used = 0
+            for line in lines:
+                if chars_used >= chars_to_show:
+                    shown_lines.append("")
+                    continue
+                    
+                remaining_chars = chars_to_show - chars_used
+                if remaining_chars >= len(line):
+                    shown_lines.append(line)
+                    chars_used += len(line)
                 else:
-                    current_line.pop()
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
+                    shown_lines.append(line[:remaining_chars])
+                    chars_used = chars_to_show
+        else:
+            # Hold phase - show all text with subtle animation
+            shown_lines = lines
         
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        return lines
+        return shown_lines
     
-    def apply_animation(self, lines, progress):
-        """Apply reveal animation"""
-        total_lines = len(lines)
-        lines_to_show = int(total_lines * progress)
-        partial_progress = (progress * total_lines) - lines_to_show
+    def draw_animated_text(self, draw, lines, font, width, height, progress):
+        """Draw text with typing animation and effects"""
+        # Safe text area (avoid top logo & bottom)
+        text_top = int(height * 0.35)
+        text_bottom = int(height * 0.85)
+        text_height = text_bottom - text_top
         
-        revealed_lines = []
-        for i in range(total_lines):
-            if i < lines_to_show:
-                revealed_lines.append(lines[i])
-            elif i == lines_to_show:
-                chars_to_show = int(len(lines[i]) * partial_progress)
-                revealed_lines.append(lines[i][:chars_to_show])
-            else:
-                revealed_lines.append("")
+        # Calculate vertical positioning
+        line_height = font.size * 1.6  # Increased spacing for readability
+        total_text_height = len([l for l in lines if l.strip()]) * line_height
+        start_y = text_top + (text_height - total_text_height) // 2
         
-        return revealed_lines
-    
-    def draw_text(self, draw, lines, font, layout, width, text_color):
-        """Draw animated text"""
-        start_y = layout["text_start_y"]
-        line_spacing = layout["line_spacing"]
+        # Hold phase animation (subtle float)
+        hold_offset = 0
+        if progress > 0.7:  # Hold phase
+            hold_progress = (progress - 0.7) / 0.3
+            hold_offset = 3 * math.sin(2 * math.pi * hold_progress * 2)
         
-        # Estimate line height
-        line_height = font.size * line_spacing * 1.4
-        
+        # Draw each line
         for i, line in enumerate(lines):
             if not line.strip():
                 continue
                 
-            y_pos = start_y + i * line_height
+            y_pos = start_y + i * line_height + hold_offset
             
             # Estimate width for centering
             line_width = len(line) * font.size // 2
             x_pos = (width - line_width) // 2
             
-            # Draw text
-            draw.text((x_pos, y_pos), line, font=font, fill=text_color)
+            # Text glow effect
+            glow_color = (*GOLD_LIGHT, 180)
+            for dx, dy in [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)]:
+                draw.text((x_pos + dx, y_pos + dy), line, font=font, fill=glow_color)
+            
+            # Main text
+            draw.text((x_pos, y_pos), line, font=font, fill=TEXT_COLOR)
 
-# ------------- Video Generation -------------
-def generate_video(text, duration, width, height, text_color, output_path):
+# ================================
+# 🎬 Video Generation
+# ================================
+def generate_typing_video(text, duration, width, height, output_path):
+    """Generate video with typing animation"""
     fps = 24
     total_frames = duration * fps
     
-    frame_generator = FrameGenerator()
+    generator = TypingFrameGenerator()
     
     try:
         with imageio.get_writer(output_path, fps=fps, codec="libx264", quality=8) as writer:
             for frame_idx in range(total_frames):
                 progress = (frame_idx + 1) / total_frames
-                frame = frame_generator.create_frame(
-                    text, progress, frame_idx, total_frames, width, height, text_color
+                frame = generator.create_frame(
+                    text, progress, frame_idx, total_frames, width, height
                 )
                 writer.append_data(frame)
                 
@@ -214,7 +239,7 @@ def generate_video(text, duration, width, height, text_color, output_path):
         
         yield 1.0
     except Exception as e:
-        st.error(f"Video error: {e}")
+        st.error(f"Video generation error: {e}")
         yield 1.0
 
 def get_video_html(video_path):
@@ -226,71 +251,92 @@ def get_video_html(video_path):
     except:
         return '<p style="color:red">Error loading video</p>'
 
-# ------------- Main UI -------------
+# ================================
+# 🌐 Streamlit App
+# ================================
 def main():
     st.markdown('<div class="glass">', unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align:center;color:#ffffff'>🎬 Simple Layout Animator</h1>")
+    st.markdown("<h1 style='text-align:center;color:#ffffff'>✍️ Typing Animation Creator</h1>")
+    st.markdown("<div style='text-align:center;color:#cccccc'>Text appears as if being typed — perfect for social media!</div>", unsafe_allow_html=True)
     
-    # Animation Settings
+    # Settings
     col1, col2 = st.columns(2)
     with col1:
-        text_color = st.color_picker("Text Color", "#FFD700")
-        duration = st.slider("Duration (seconds)", 3, 8, 5)
-    with col2:
+        duration = st.slider("Duration (seconds)", 3, 10, 6)
         resolution = st.selectbox("Resolution", ["720x1280", "1080x1920"], index=0)
     
+    with col2:
+        show_logo = st.checkbox("Show Brand Logo", True)
+        preview_mode = st.checkbox("Fast Preview (lower quality)", False)
+    
     # Text Input
-    sentence = st.text_area(
+    default_text = "Pre-drill holes before driving screws into hardwood to prevent splitting and ensure clean professional finishes."
+    text_input = st.text_area(
         "Your Text:", 
-        "CREATE AMAZING CONTENT WITH SIMPLE LAYOUT OPTIMIZATION!",
-        height=80,
-        max_chars=200
+        default_text,
+        height=100,
+        max_chars=300,
+        help="Keep it under 300 characters for best results"
     )
     
     # Resolution mapping
     resolution_map = {"720x1280": (720, 1280), "1080x1920": (1080, 1920)}
     W, H = resolution_map[resolution]
     
-    if st.button("🚀 Generate Animation", type="primary", use_container_width=True):
-        if not sentence.strip():
-            st.warning("Please enter some text.")
+    if st.button("🎬 Generate Typing Animation", type="primary", use_container_width=True):
+        if not text_input.strip():
+            st.warning("Please enter some text to animate.")
             return
         
-        with st.spinner("Generating your animation..."):
+        with st.spinner("Creating your typing animation... (this may take 30-60 seconds)"):
             tmpdir = Path(tempfile.mkdtemp())
-            out_mp4 = tmpdir / "layout_animation.mp4"
+            out_mp4 = tmpdir / "typing_animation.mp4"
             
             try:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                for progress in generate_video(sentence, duration, W, H, text_color, out_mp4):
+                # Adjust quality for preview
+                quality = 6 if preview_mode else 8
+                
+                for progress in generate_typing_video(text_input, duration, W, H, out_mp4):
                     progress_bar.progress(progress)
-                    status_text.text(f"🎬 Generating: {int(progress * 100)}%")
+                    status_text.text(f"🎬 Typing Animation: {int(progress * 100)}%")
                 
                 st.session_state.generated_video_path = out_mp4
                 st.session_state.show_video = True
                 st.session_state.video_tmpdir = tmpdir
                 
-                st.success("✨ Animation created!")
+                st.success("✨ Typing animation created!")
                 
             except Exception as e:
-                st.error(f"❌ Error: {e}")
+                st.error(f"❌ Error generating video: {e}")
     
     # Display video
     if hasattr(st.session_state, 'show_video') and st.session_state.show_video:
         if st.session_state.generated_video_path.exists():
-            st.markdown("### 🎥 Your Animation")
+            st.markdown("### 🎥 Your Typing Animation")
             st.markdown(get_video_html(st.session_state.generated_video_path), unsafe_allow_html=True)
             
             with open(st.session_state.generated_video_path, "rb") as f:
                 st.download_button(
                     "⬇️ Download MP4", 
                     f, 
-                    "layout_animation.mp4", 
+                    "typing_animation.mp4", 
                     "video/mp4", 
-                    use_container_width=True
+                    use_container_width=True,
+                    help="Perfect for Instagram Reels, TikTok, or YouTube Shorts"
                 )
+    
+    # Tips section
+    with st.expander("💡 Pro Tips"):
+        st.markdown("""
+        - **Short & Sweet**: 80-150 characters work best
+        - **Clear Messages**: One main idea per animation
+        - **DIY Tips**: Perfect for step-by-step tutorials
+        - **Quote Cards**: Great for inspirational quotes
+        - **Product Features**: Highlight key benefits
+        """)
     
     st.markdown("</div>", unsafe_allow_html=True)
 
