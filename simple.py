@@ -14,14 +14,7 @@ import json
 st.set_page_config(page_title="AI Animation", layout="centered")
 
 # Use groq_key from secrets
-groq_key = st.secrets.get("groq_key", "")
-
-# Remove styling, use minimal approach
-st.markdown("""
-<style>
-.video-container { margin: 1rem 0; border-radius: 8px; overflow: hidden; }
-</style>
-""", unsafe_allow_html=True)
+GROQ_API_KEY = st.secrets.get("groq_key", "")
 
 class GroqContentGenerator:
     def __init__(self, api_key):
@@ -63,7 +56,7 @@ class GroqContentGenerator:
             "Safety first - always wear protective equipment when working."
         ]
 
-class TypingFrameGenerator:
+class VerticalAnimationGenerator:
     def __init__(self):
         self.logo = self.load_logo()
     
@@ -79,62 +72,35 @@ class TypingFrameGenerator:
             draw.rectangle([5, 15, 115, 45], fill=(245, 215, 140, 180))
             return img
 
-    def create_frame(self, text, progress, width, height, text_color):
-        # Create background
-        bg = np.zeros((height, width, 3), dtype=np.uint8)
-        bg[:, :] = [30, 25, 40]  # Dark background
+    def calculate_dynamic_font_size(self, text, width, height):
+        """Calculate font size based on character count and available space"""
+        char_count = len(text)
         
-        img = Image.fromarray(bg)
-        draw = ImageDraw.Draw(img)
-        
-        # Add logo
-        if self.logo:
-            logo_x = (width - self.logo.width) // 2
-            img.paste(self.logo, (logo_x, 40), self.logo)
-        
-        # Calculate text layout using pixel measurements
-        font_size = self.calculate_optimal_font_size(text, width, height)
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
-        
-        # Break text into lines based on pixel width
-        lines = self.break_text_to_lines(text, font, width - 100)
-        
-        # Apply top-to-bottom typing animation
-        visible_lines = self.apply_line_animation(lines, progress)
-        
-        # Draw text with pixel-perfect positioning
-        self.draw_text_lines(draw, visible_lines, font, width, height, text_color)
-        
-        return np.array(img)
-
-    def calculate_optimal_font_size(self, text, width, height):
-        # Calculate based on available space and text length
-        max_font = min(80, height // 10)
-        min_font = 40
-        text_length = len(text)
-        
-        if text_length < 50:
-            return max_font
-        elif text_length < 100:
-            return max_font - 10
+        # Base sizing algorithm
+        if char_count <= 30:
+            return min(80, height // 8)  # Large for short text
+        elif char_count <= 60:
+            return min(60, height // 10)  # Medium
+        elif char_count <= 100:
+            return min(45, height // 12)  # Smaller
         else:
-            return min_font
+            return min(35, height // 14)  # Smallest for long text
 
-    def break_text_to_lines(self, text, font, max_width):
+    def break_text_into_lines(self, text, font, max_width):
+        """Break text into lines that fit within max_width using pixel measurements"""
         words = text.split()
         lines = []
         current_line = []
+        
+        temp_img = Image.new('RGB', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
         
         for word in words:
             current_line.append(word)
             test_line = ' '.join(current_line)
             
-            # Use textbbox for accurate pixel measurement
             try:
-                bbox = ImageDraw.Draw(Image.new('RGB', (1, 1))).textbbox((0, 0), test_line, font=font)
+                bbox = temp_draw.textbbox((0, 0), test_line, font=font)
                 line_width = bbox[2] - bbox[0]
             except:
                 line_width = len(test_line) * font.size // 1.8
@@ -153,41 +119,77 @@ class TypingFrameGenerator:
         
         return lines
 
-    def apply_line_animation(self, lines, progress):
-        """Top-to-bottom line reveal animation"""
+    def apply_vertical_animation(self, lines, progress, font, height):
+        """Apply vertical top-to-bottom reveal animation"""
         total_lines = len(lines)
-        fully_visible_lines = int(total_lines * progress)
-        partial_line_progress = (progress * total_lines) - fully_visible_lines
         
-        visible_lines = []
-        for i, line in enumerate(lines):
-            if i < fully_visible_lines:
-                # Fully visible line
-                visible_lines.append(line)
-            elif i == fully_visible_lines:
-                # Partially visible line
-                chars_to_show = int(len(line) * partial_line_progress)
-                visible_lines.append(line[:chars_to_show])
-            else:
-                # Not yet visible
-                visible_lines.append("")
-        
-        return visible_lines
-
-    def draw_text_lines(self, draw, lines, font, width, height, text_color):
-        """Draw text with pixel-perfect vertical centering"""
-        # Calculate total text block height
+        # Calculate line height using actual font metrics
         try:
-            bbox = draw.textbbox((0, 0), "Test", font=font)
-            line_height = bbox[3] - bbox[0] + 10
+            temp_img = Image.new('RGB', (1, 1))
+            temp_draw = ImageDraw.Draw(temp_img)
+            bbox = temp_draw.textbbox((0, 0), "Test", font=font)
+            line_height = bbox[3] - bbox[0] + 15
         except:
-            line_height = font.size * 1.4
+            line_height = font.size * 1.6
         
-        total_text_height = len([l for l in lines if l]) * line_height
-        start_y = (height - total_text_height) // 2
+        # Calculate total text block height
+        total_text_height = total_lines * line_height
         
-        # Draw each line
-        for i, line in enumerate(lines):
+        # Calculate visible portion based on progress
+        visible_height = int(total_text_height * progress)
+        
+        # Determine which lines are fully or partially visible
+        animated_lines = []
+        cumulative_height = 0
+        
+        for line in lines:
+            if cumulative_height + line_height <= visible_height:
+                # Line fully visible
+                animated_lines.append(line)
+            elif cumulative_height < visible_height:
+                # Line partially visible
+                partial_progress = (visible_height - cumulative_height) / line_height
+                chars_to_show = int(len(line) * partial_progress)
+                animated_lines.append(line[:chars_to_show])
+            else:
+                # Line not visible
+                animated_lines.append("")
+            
+            cumulative_height += line_height
+        
+        return animated_lines, line_height
+
+    def create_frame(self, text, progress, width, height, text_color):
+        # Create background
+        bg = np.zeros((height, width, 3), dtype=np.uint8)
+        bg[:, :] = [30, 25, 40]
+        
+        img = Image.fromarray(bg)
+        draw = ImageDraw.Draw(img)
+        
+        # Add logo at top
+        if self.logo:
+            logo_x = (width - self.logo.width) // 2
+            img.paste(self.logo, (logo_x, 40), self.logo)
+        
+        # Calculate dynamic font size
+        font_size = self.calculate_dynamic_font_size(text, width, height)
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+        
+        # Break text into lines
+        lines = self.break_text_into_lines(text, font, width - 100)
+        
+        # Apply vertical animation
+        animated_lines, line_height = self.apply_vertical_animation(lines, progress, font, height)
+        
+        # Calculate starting position (top of screen)
+        start_y = 150  # Start below logo
+        
+        # Draw animated text from top to bottom
+        for i, line in enumerate(animated_lines):
             if not line:
                 continue
                 
@@ -201,14 +203,16 @@ class TypingFrameGenerator:
             y = start_y + (i * line_height)
             
             # Draw text with shadow for readability
-            shadow_color = (30, 30, 30)
+            shadow_color = (20, 20, 20)
             draw.text((x + 2, y + 2), line, font=font, fill=shadow_color)
             draw.text((x, y), line, font=font, fill=text_color)
+        
+        return np.array(img)
 
 def generate_video(text, duration, width, height, text_color, output_path):
     fps = 24
     total_frames = duration * fps
-    generator = TypingFrameGenerator()
+    generator = VerticalAnimationGenerator()
     
     with imageio.get_writer(output_path, fps=fps, codec="libx264", quality=8) as writer:
         for frame_idx in range(total_frames):
@@ -220,12 +224,12 @@ def generate_video(text, duration, width, height, text_color, output_path):
 
 def main():
     # AI Content Section
-    ai_generator = GroqContentGenerator(groq_key)
+    ai_generator = GroqContentGenerator(GROQ_API_KEY)
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        if groq_key:
+        if GROQ_API_KEY:
             topic = st.text_input("DIY Topic", placeholder="e.g., woodworking, home repair")
             if st.button("Generate Tips") and topic:
                 with st.spinner("Generating..."):
