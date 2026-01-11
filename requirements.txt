@@ -2,7 +2,12 @@ numpy
 imageio
 imageio-ffmpeg
 onnxruntime
-pillow
-requests
 streamlit-image-select
+streamlit==1.28.0
+numpy==1.24.3
+Pillow==10.1.0
+moviepy==1.0.3
+requests==2.31.0
+bs4
+groq
 
