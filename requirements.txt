@@ -3,10 +3,10 @@ imageio
 imageio-ffmpeg
 onnxruntime
 streamlit-image-select
-streamlit==1.28.0
-Pillow==10.1.0
-moviepy==1.0.3
-requests==2.31.0
+streamlit
+Pillow
+moviepy
+requests
 bs4
 groq
 
