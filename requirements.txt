@@ -1,6 +1,8 @@
 numpy
 imageio
 imageio-ffmpeg
+onnxruntime
 pillow
 requests
-rembg[cpu]
+streamlit-image-select
+
