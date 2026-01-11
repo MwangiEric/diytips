@@ -3,4 +3,4 @@ imageio
 imageio-ffmpeg
 pillow
 requests
-rembg>=2.0.54
+rembg[cpu]
