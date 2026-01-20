@@ -9,4 +9,4 @@ moviepy
 requests
 bs4
 groq
-
+opencv
