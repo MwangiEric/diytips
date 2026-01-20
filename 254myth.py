@@ -26,7 +26,7 @@ st.markdown("""
 
 class Video254Factory:
     def __init__(self):
-        self.poster_url = "https://your-app.vercel.app/api/og/254-poster"  # UPDATE THIS
+        self.poster_url = "https://genog.vercel.app/api/og/254"  # UPDATE THIS
     
     def load_poster(self):
         """Load the static OG poster background"""
