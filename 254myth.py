@@ -126,8 +126,7 @@ with tab1:
     with col1:
         message = st.text_area(
             "Video Message", 
-            "KSh4,200/mo → KSh5M Family Protection
-Flexible Premiums · Jubilee Faida Elite",
+            "KSh4,200/mo → KSh5M Family Protection Flexible Premiums · Jubilee Faida Elite",
             height=100
         )
     
