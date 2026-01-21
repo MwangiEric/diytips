@@ -299,7 +299,7 @@ def main():
             load_button = st.button("🚀 Load Transcript", type="primary")
         
         if load_button and video_url:
-            with st.spinner("Loading YouTube transcript...")
+            with st.spinner("Loading YouTube transcript..."):
                 video_id = extract_video_id(video_url)
                 if video_id:
                     transcript = get_transcript_with_proxy(video_id, CONFIG['video']['proxy_enabled'])
