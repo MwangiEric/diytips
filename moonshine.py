@@ -6,7 +6,7 @@ from io import BytesIO
 # ============================================================================
 # CONFIGURATION & ASSETS
 # ============================================================================
-API_URL = "http://localhost:8000"
+API_URL = "https://moon-shine.vercel.app"
 # Use a high-quality jersey base if search is empty
 DEFAULT_JERSEY = "https://i.imgur.com/your_jersey_template.png" 
 
