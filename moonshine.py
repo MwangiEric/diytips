@@ -1,110 +1,136 @@
 import streamlit as st
 import requests
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image
 from io import BytesIO
 
 # ============================================================================
-# CONFIGURATION & ASSETS
+# CONFIGURATION
 # ============================================================================
-API_URL = "https://moon-shine.vercel.app"
-# Use a high-quality jersey base if search is empty
+API_URL = "https://moon-shine.vercel.app"  # Update this to your deployed API URL
 DEFAULT_JERSEY = "https://i.imgur.com/your_jersey_template.png" 
 
+# Fallback font setting per your instructions [2026-01-15]
+ST_FONT_STYLE = "sans-serif"
+
 def get_pil_image(url):
+    """Fetch image from URL and convert to RGBA for transparency support."""
     try:
-        resp = requests.get(url, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
         return Image.open(BytesIO(resp.content)).convert("RGBA")
-    except:
+    except Exception as e:
+        st.error(f"Error loading image: {e}")
         return None
 
 # ============================================================================
 # APP INTERFACE
 # ============================================================================
-st.title("⚽ Moonshine Jersey & Streetwear Studio")
+st.set_page_config(page_title="Gemini Studio", layout="wide")
 
-tab1, tab2 = st.tabs(["🔍 Calligraphy & Graphics", "👕 Jersey Canvas"])
+# Apply fallback font styling via CSS
+st.markdown(f"""<style> html, body, [class*="css"] {{ font-family: '{ST_FONT_STYLE}'; }} </style>""", unsafe_allow_html=True)
 
-with tab1:
-    st.header("Asset Discovery")
-    col_q, col_c = st.columns([2, 1])
+st.title("🎨 Gemini Asset & Jersey Studio")
+
+# Sidebar for Global Filters
+with st.sidebar:
+    st.header("Search Filters")
+    min_w = st.number_input("Min Width (px)", value=1000, step=500)
+    limit = st.slider("Results Limit", 1, 50, 20)
+    quality_mode = st.checkbox("Quality Filter (No Watermarks)", value=True)
     
-    with col_q:
-        # Default to Graffiti/Calligraphy as requested
-        q = st.text_input("Search Styles", "Street Graffiti Tag")
-    with col_c:
-        c = st.selectbox("Style Category", ["graffiti", "typography", "vectors", "all"])
+    st.divider()
+    st.info("Debug Info")
+    if "last_query" in st.session_state:
+        st.code(st.session_state.last_query)
 
-    if st.button("Search Assets", type="primary"):
-        # Utilizing your v3.2.0 API params: e=png, w=500, h=500
-        resp = requests.get(f"{API_URL}/api/search", params={"q": q, "c": c, "e": "png", "w": 500, "h": 500})
-        st.session_state.search_results = resp.json().get("assets", [])
+tab1, tab2 = st.tabs(["🔍 Discovery", "👕 Jersey Canvas"])
 
+# ----------------------------------------------------------------------------
+# TAB 1: DISCOVERY (SEARCH)
+# ----------------------------------------------------------------------------
+with tab1:
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        query = st.text_input("What are you looking for?", placeholder="e.g. vintage lion, cyberpunk car")
+    with col2:
+        # These match your FastAPI AssetType Enum
+        asset_type = st.selectbox("Style", ["None", "animals", "graffiti", "typography", "retro", "anime", "streetwear"])
+    with col3:
+        ext = st.selectbox("Format", ["png", "jpg", "svg"])
+
+    if st.button("Find Assets", type="primary", use_container_width=True):
+        # Build Params
+        params = {"q": query, "e": ext, "limit": limit, "quality": str(quality_mode).lower()}
+        if asset_type != "None": params["t"] = asset_type
+        if min_w > 0: params["w"] = min_w
+        
+        st.session_state.last_query = f"{API_URL}/api/search?q={query}..."
+        
+        with st.spinner("Searching global databases..."):
+            try:
+                resp = requests.get(f"{API_URL}/api/search", params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # ACCESS NESTED RESULTS: results -> assets
+                    st.session_state.search_results = data.get("results", {}).get("assets", [])
+                    st.session_state.suggestions = data.get("suggestions", {}).get("keywords", [])
+                else:
+                    st.error(f"API Error {resp.status_code}: {resp.text}")
+            except Exception as e:
+                st.error(f"Connection Failed: {e}")
+
+    # Keyword Suggestions Bar
+    if "suggestions" in st.session_state and st.session_state.suggestions:
+        st.write("✨ **Related Keywords:**")
+        sug_cols = st.columns(len(st.session_state.suggestions[:6]))
+        for i, sug in enumerate(st.session_state.suggestions[:6]):
+            if sug_cols[i].button(sug["keyword"], key=f"sug_{i}", use_container_width=True):
+                st.toast(f"Tip: Try searching for '{sug['keyword']}'")
+
+    st.divider()
+
+    # Results Grid
     if "search_results" in st.session_state:
-        cols = st.columns(4)
-        for idx, asset in enumerate(st.session_state.search_results):
-            with cols[idx % 4]:
-                st.image(asset["img"], use_container_width=True)
-                if st.button("Use this Style", key=f"sel_{idx}"):
-                    st.session_state.selected_asset = asset["img"]
-                    st.toast("Style Loaded!")
+        if not st.session_state.search_results:
+            st.warning("No assets found. Try lowering the Min Width or changing keywords.")
+        else:
+            cols = st.columns(4)
+            for idx, asset in enumerate(st.session_state.search_results):
+                with cols[idx % 4]:
+                    # Use thumbnail_src for the grid view
+                    st.image(asset.get("thumbnail_src"), use_container_width=True)
+                    st.caption(f"📍 {asset.get('source_site')} | {asset.get('resolution')}")
+                    
+                    if st.button("Select High-Res", key=f"btn_{idx}", use_container_width=True):
+                        st.session_state.selected_img_url = asset.get("img_url")
+                        st.success("Loaded to Canvas!")
 
+# ----------------------------------------------------------------------------
+# TAB 2: JERSEY CANVAS (RENDERING)
+# ----------------------------------------------------------------------------
 with tab2:
-    if "selected_asset" not in st.session_state:
-        st.warning("Please select a Calligraphy or Graffiti piece first.")
+    if "selected_img_url" not in st.session_state:
+        st.info("Please select a graphic from the Discovery tab first.")
     else:
-        col_setup, col_render = st.columns([1, 2])
-
-        with col_setup:
-            st.subheader("Jersey Specs")
-            jersey_q = st.text_input("Jersey Base", "blank soccer jersey front")
+        c1, c2 = st.columns([1, 1])
+        
+        with c1:
+            st.subheader("Placement Controls")
+            # In a real app, you'd add sliders for X/Y position and scale here
+            st.write("**Current Graphic URL:**")
+            st.code(st.session_state.selected_img_url)
             
-            # Jersey specific text (Name/Number)
-            st.divider()
-            player_name = st.text_input("Player Name", "GEMINI")
-            player_num = st.text_input("Number", "10")
-            text_color = st.color_picker("Print Color", "#FFFFFF")
+            if st.button("🔄 Reset Canvas"):
+                del st.session_state.selected_img_url
+                st.rerun()
 
-            # Positioning Sliders
-            scale = st.slider("Graphic Scale", 0.1, 1.0, 0.4)
-            y_offset = st.slider("Chest Position", 0, 1000, 350)
-            
-            generate = st.button("🎯 Render Jersey", type="primary", use_container_width=True)
-
-        with col_render:
-            if generate:
-                with st.spinner("Applying print to jersey..."):
-                    # 1. Fetch Jersey Template
-                    j_resp = requests.get(f"{API_URL}/api/search", params={"q": jersey_q, "c": "all", "limit": 1})
-                    j_data = j_resp.json().get("assets")
-                    j_url = j_data[0]["img"] if j_data else DEFAULT_JERSEY
-                    
-                    # 2. Process Layers
-                    jersey = get_pil_image(j_url).resize((1200, 1200))
-                    graphic = get_pil_image(st.session_state.selected_asset)
-                    
-                    # Scale Graphic
-                    gw = int(jersey.width * scale)
-                    gh = int(gw * (graphic.height / graphic.width))
-                    graphic = graphic.resize((gw, gh), Image.Resampling.LANCZOS)
-                    
-                    # 3. Draw on Canvas
-                    draw = ImageDraw.Draw(jersey)
-                    
-                    # Paste Graffiti/Calligraphy on Chest
-                    jersey.alpha_composite(graphic, ((jersey.width - gw)//2, y_offset))
-                    
-                    # Add Jersey Text (Using standard PIL fonts)
-                    # Note: In a real prod env, you'd load a specific 'jersey' font file
-                    try:
-                        font = ImageFont.load_default() 
-                        draw.text((600, y_offset - 100), player_name, fill=text_color, font=font, anchor="mm")
-                        draw.text((600, y_offset + gh + 50), player_num, fill=text_color, font=font, anchor="mm")
-                    except:
-                        pass
-
-                    st.image(jersey, caption="Final Jersey Print Preview", use_container_width=True)
-                    
-                    # Download
-                    buf = BytesIO()
-                    jersey.save(buf, format="PNG")
-                    st.download_button("📥 Download Print File", buf.getvalue(), "jersey_design.png", "image/png")
+        with c2:
+            st.subheader("Preview")
+            with st.spinner("Rendering High-Res Preview..."):
+                graphic = get_pil_image(st.session_state.selected_img_url)
+                if graphic:
+                    st.image(graphic, caption="High-Resolution Source", use_container_width=True)
+                    st.download_button("Download PNG", data=requests.get(st.session_state.selected_img_url).content, file_name="gemini_asset.png")
