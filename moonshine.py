@@ -1,155 +1,152 @@
 import streamlit as st
 import requests
-from PIL import Image
+import base64
+from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
 # ============================================================================
-# CONFIGURATION & PROXIES
+# CONFIGURATION
 # ============================================================================
 API_URL = "https://moon-shine.vercel.app"
 CORS_PROXY = "https://cors.ericmwangi13.workers.dev/?url="
+BASE_SIZE = 2000 
+
+# Updated Mockup URLs as provided
+MOCKUPS = {
+    "Empty Canvas": "https://placehold.co/2000x2000/FFFFFF/png?text=+",
+    "Premium Black Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_premium%20black%20t%20shirt%20mockup_18848206.png",
+    "Standard Black Shirt": "https://ik.imagekit.io/ericmwangi/tshtblck.png",
+    "Realistic White Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_realistic%20white%20t%20shirt%20vector_8963503.png"
+}
 
 # Fallback font [2026-01-15]
 ST_FONT_STYLE = "sans-serif"
 
-def get_proxied_image(url):
-    """Fetches image via your CORS proxy to prevent 403/Forbidden errors."""
-    if not url: return None
+def get_img(input_data):
+    """Universal loader for URLs and Base64 strings."""
+    if not input_data: return None
     try:
-        proxied_url = f"{CORS_PROXY}{url}"
-        resp = requests.get(proxied_url, timeout=10)
-        resp.raise_for_status()
-        return Image.open(BytesIO(resp.content)).convert("RGBA")
-    except Exception as e:
-        st.error(f"Handshake failed: {e}")
+        if isinstance(input_data, str) and input_data.startswith("data:image"):
+            _, encoded = input_data.split(",", 1)
+            return Image.open(BytesIO(base64.b64decode(encoded))).convert("RGBA")
+        
+        target = f"{CORS_PROXY}{input_data}" if "http" in input_data and CORS_PROXY not in input_data else input_data
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(target, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            return Image.open(BytesIO(resp.content)).convert("RGBA")
+    except:
         return None
 
 # ============================================================================
-# APP SETUP
+# INTERFACE SETUP
 # ============================================================================
-st.set_page_config(page_title="Gemini Studio Pro", layout="wide")
-st.markdown(f"""<style> html, body {{ font-family: '{ST_FONT_STYLE}'; }} </style>""", unsafe_allow_html=True)
+st.set_page_config(page_title="Gemini Design Studio", layout="wide")
 
-# ----------------------------------------------------------------------------
-# SIDEBAR: SEARCH & FILTERS
-# ----------------------------------------------------------------------------
+# SIDEBAR: Inputs & Suggestions
 with st.sidebar:
-    st.title("⚙️ Studio Config")
+    st.title("⚙️ Studio Controls")
+    q_input = st.text_input("Keywords", "Lion")
+    t_input = st.selectbox("Style Category", ["None", "animals", "graffiti", "typography", "reggae", "streetwear"])
     
-    with st.expander("🔍 Search Parameters", expanded=True):
-        query = st.text_input("Search Term", "lion")
-        asset_type = st.selectbox("Asset Style", ["None", "animals", "graffiti", "typography", "reggae", "streetwear"])
-        ext = st.selectbox("File Type", ["png", "svg", "jpg"])
+    if st.button("🔍 Find Assets", use_container_width=True, type="primary"):
+        params = {"q": q_input, "limit": 30}
+        if t_input != "None": params["t"] = t_input
+        r = requests.get(f"{API_URL}/api/search", params=params)
+        if r.status_code == 200:
+            data = r.json()
+            st.session_state.results = data.get("results", {}).get("assets", [])
+            st.session_state.chips = data.get("suggestions", {}).get("keywords", [])
+
+    # MOVED: Suggestions in Sidebar
+    if "chips" in st.session_state and st.session_state.chips:
+        st.divider()
+        st.subheader("✨ Keyword Suggestions")
+        for sug in st.session_state.chips[:12]:
+            if st.button(f"#{sug['keyword']}", key=f"s_{sug['keyword']}", use_container_width=True):
+                st.toast(f"Tip: Search for {sug['keyword']}")
+
+# ============================================================================
+# MAIN CONTENT
+# ============================================================================
+tab_discovery, tab_canvas = st.tabs(["🖼️ Asset Discovery", "👕 Design Canvas"])
+
+# DISCOVERY TAB: Grid with Download & Select
+with tab_discovery:
+    if "results" in st.session_state:
+        cols = st.columns(6)
+        for idx, item in enumerate(st.session_state.results):
+            with cols[idx % 6]:
+                st.image(item.get("thumbnail_src"), use_container_width=True)
+                c1, c2 = st.columns(2)
+                if c1.button("➕", key=f"sel_{idx}", help="Select for Canvas"):
+                    st.session_state.active_graphic = item.get("img_url")
+                    st.toast("Graphic Loaded!")
+                
+                # SEPARATE DOWNLOAD: Added as requested
+                img_url = item.get("img_url")
+                if img_url:
+                    c2.download_button("💾", data=img_url, file_name=f"asset_{idx}.png", help="Download Asset Separately")
+
+# CANVAS TAB: Mockups & Controls
+with tab_canvas:
+    tool_col, view_col = st.columns([1, 2.5])
     
-    with st.expander("🛠️ Advanced Filters"):
-        min_w = st.number_input("Min Width", value=1000)
-        limit = st.slider("Result Count", 10, 50, 30)
-        quality_mode = st.checkbox("High Quality Only", value=True)
-
-    if st.button("🚀 Search Global Assets", use_container_width=True, type="primary"):
-        params = {"q": query, "e": ext, "limit": limit, "quality": str(quality_mode).lower()}
-        if asset_type != "None": params["t"] = asset_type
-        if min_w > 0: params["w"] = min_w
-        
-        try:
-            resp = requests.get(f"{API_URL}/api/search", params=params)
-            if resp.status_code == 200:
-                data = resp.json()
-                st.session_state.search_results = data.get("results", {}).get("assets", [])
-                st.session_state.suggestions = data.get("suggestions", {}).get("keywords", [])
-            else:
-                st.error("API Error")
-        except Exception as e:
-            st.error(f"Connection error: {e}")
-
-# ----------------------------------------------------------------------------
-# MAIN PAGE: TABS
-# ----------------------------------------------------------------------------
-tab1, tab2 = st.tabs(["🖼️ Asset Discovery", "👕 Jersey Canvas"])
-
-with tab1:
-    # 1. Keywords Row (Small & Scannable)
-    if "suggestions" in st.session_state:
-        st.caption("✨ Related Keywords")
-        sug_data = st.session_state.suggestions[:12]
-        cols_sug = st.columns(len(sug_data))
-        for i, sug in enumerate(sug_data):
-            if cols_sug[i].button(sug["keyword"], key=f"s_{i}", use_container_width=True):
-                st.toast(f"Tip: Update sidebar to '{sug['keyword']}'")
-
-    st.divider()
-
-    # 2. Grid Results (6 columns for smaller thumbnails)
-    if "search_results" in st.session_state:
-        results = st.session_state.search_results
-        if not results:
-            st.info("No results. Adjust filters in the sidebar.")
-        else:
-            cols = st.columns(6) # Increased density
-            for idx, asset in enumerate(results):
-                with cols[idx % 6]:
-                    # Displaying fixed-height containers to keep grid tidy
-                    st.image(asset.get("thumbnail_src"), use_container_width=True)
-                    if st.button("Select", key=f"sel_{idx}", use_container_width=True):
-                        st.session_state.selected_asset = asset.get("img_url")
-                        st.toast("Graphic Selected!")
-
-# ----------------------------------------------------------------------------
-# TAB 2: JERSEY CANVAS
-# ----------------------------------------------------------------------------
-with tab2:
-    canv_col_tools, canv_col_main = st.columns([1, 3])
-    
-    with canv_col_tools:
-        st.subheader("Canvas Setup")
-        base_product = st.selectbox("Pick Base Product", [
-            "Empty Canvas", 
-            "Classic T-Shirt", 
-            "Streetwear Hoodie", 
-            "Sports Jersey"
-        ])
-        
-        # Default Mappings
-        product_urls = {
-            "Empty Canvas": "https://placehold.co/1000x1000/FFFFFF/png?text=Empty+Canvas",
-            "Classic T-Shirt": "https://i.imgur.com/your_tshirt_mockup.png",
-            "Streetwear Hoodie": "https://i.imgur.com/your_hoodie_mockup.png",
-            "Sports Jersey": "https://i.imgur.com/your_jersey_mockup.png"
-        }
+    with tool_col:
+        st.subheader("1. Template Selection")
+        # Default is 2000x2000 Empty Canvas (index 0)
+        base_choice = st.selectbox("Mockup Base", list(MOCKUPS.keys()), index=0)
         
         st.divider()
-        st.write("**Active Graphic:**")
-        if "selected_asset" in st.session_state:
-            st.caption(st.session_state.selected_asset[:50] + "...")
-        else:
-            st.warning("No graphic selected from Discovery tab.")
+        st.subheader("2. File Upload")
+        uploaded_file = st.file_uploader("Upload Logo", type=["png", "jpg", "jpeg"])
+        if uploaded_file:
+            encoded = base64.b64encode(uploaded_file.read()).decode()
+            st.session_state.active_graphic = f"data:image/png;base64,{encoded}"
 
-    with canv_col_main:
-        if "selected_asset" in st.session_state or base_product != "Empty Canvas":
-            with st.spinner("Stitching layers..."):
-                # 1. Load the Base
-                base_img = get_proxied_image(product_urls.get(base_product))
+        st.divider()
+        st.subheader("3. Graphic Controls")
+        g_scale = st.slider("Graphic Size", 0.1, 1.5, 0.5)
+        g_x = st.slider("Graphic X Position", 0, BASE_SIZE, BASE_SIZE//2)
+        g_y = st.slider("Graphic Y Position", 0, BASE_SIZE, BASE_SIZE//2)
+
+        st.divider()
+        st.subheader("4. Text Controls")
+        user_text = st.text_input("Shirt Text", "")
+        t_size = st.slider("Text Size", 20, 500, 100)
+        t_x = st.slider("Text X Position", 0, BASE_SIZE, BASE_SIZE//2)
+        t_y = st.slider("Text Y Position", 0, BASE_SIZE, 600)
+        t_color = st.color_picker("Text Color", "#FFFFFF")
+
+    with view_col:
+        with st.spinner("Rendering Layered Design..."):
+            # A. Base Layer
+            canvas = get_img(MOCKUPS[base_choice])
+            if canvas:
+                canvas = canvas.resize((BASE_SIZE, BASE_SIZE), Image.LANCZOS)
+                draw = ImageDraw.Draw(canvas)
+
+                # B. Graphic Layer
+                if "active_graphic" in st.session_state:
+                    overlay = get_img(st.session_state.active_graphic)
+                    if overlay:
+                        new_w = int(BASE_SIZE * g_scale)
+                        new_h = int(overlay.height * (new_w / overlay.width))
+                        overlay = overlay.resize((new_w, new_h), Image.LANCZOS)
+                        canvas.paste(overlay, (g_x - new_w//2, g_y - new_h//2), overlay)
+
+                # C. Text Layer
+                if user_text:
+                    try:
+                        # PIL default font doesn't scale perfectly without .ttf, 
+                        # but we use 'font_size' for newer Pillow versions
+                        draw.text((t_x, t_y), user_text, fill=t_color, anchor="mm", font_size=t_size)
+                    except:
+                        draw.text((t_x, t_y), user_text, fill=t_color, anchor="mm")
+
+                st.image(canvas, use_container_width=True, caption="2000x2000 Export Preview")
                 
-                # 2. Load the Graphic
-                if "selected_asset" in st.session_state:
-                    overlay = get_proxied_image(st.session_state.selected_asset)
-                    
-                    if base_img and overlay:
-                        # Simple compositing logic (Center Overlay)
-                        # We resize overlay to fit roughly 40% of the base
-                        ov_w = int(base_img.width * 0.4)
-                        ratio = ov_w / float(overlay.width)
-                        ov_h = int(overlay.height * ratio)
-                        overlay = overlay.resize((ov_w, ov_h), Image.LANCZOS)
-                        
-                        # Position in center
-                        pos = ((base_img.width - ov_w)//2, (base_img.height - ov_h)//2)
-                        base_img.paste(overlay, pos, overlay)
-                
-                if base_img:
-                    st.image(base_img, caption=f"Preview: {base_product}", use_container_width=True)
-                    
-                    # Download
-                    buf = BytesIO()
-                    base_img.save(buf, format="PNG")
-                    st.download_button("Download Design", data=buf.getvalue(), file_name="studio_export.png")
+                # D. Export Design
+                buf = BytesIO()
+                canvas.save(buf, format="PNG")
+                st.download_button("💾 Download Finished Mockup", buf.getvalue(), "gemini_studio_export.png", use_container_width=True)
