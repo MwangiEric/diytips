@@ -1,17 +1,16 @@
 import streamlit as st
 import requests
 import base64
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from io import BytesIO
 
 # ============================================================================
-# 1. CONFIGURATION & URLS
+# CONFIGURATION
 # ============================================================================
 API_URL = "https://moon-shine.vercel.app"
 CORS_PROXY = "https://cors.ericmwangi13.workers.dev/?url="
 BASE_SIZE = 2000 
 
-# Mockups provided by user
 MOCKUPS = {
     "Empty Canvas": "https://placehold.co/2000x2000/FFFFFF/png?text=+",
     "Premium Black Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_premium%20black%20t%20shirt%20mockup_18848206.png",
@@ -19,96 +18,99 @@ MOCKUPS = {
     "Realistic White Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_realistic%20white%20t%20shirt%20vector_8963503.png"
 }
 
-# Fallback font [2026-01-15]
-ST_FONT_STYLE = "sans-serif"
-
 # ============================================================================
-# 2. CORE UTILITIES
+# ROBUST IMAGE HANDLING
 # ============================================================================
-def get_img(input_data):
-    """Universal loader: Fixes // protocols, handles Base64, and uses CORS proxy."""
-    if not input_data: return None
+def get_raw_bytes(url):
+    """Fetches actual image data for downloads and PIL processing."""
+    if not url: return None
     try:
-        # A. Base64 Logic
-        if isinstance(input_data, str) and input_data.startswith("data:image"):
-            _, encoded = input_data.split(",", 1)
-            return Image.open(BytesIO(base64.b64decode(encoded))).convert("RGBA")
+        # Clean protocol-relative URLs
+        target = str(url)
+        if target.startswith("//"): target = "https:" + target
         
-        # B. URL Logic & Protocol Fix (// to https://)
-        url = str(input_data)
-        if url.startswith("//"):
-            url = "https:" + url
+        # Apply Proxy
+        if "http" in target and CORS_PROXY not in target:
+            target = f"{CORS_PROXY}{target}"
             
-        # C. Proxy & Fetch
-        target = f"{CORS_PROXY}{url}" if "http" in url and CORS_PROXY not in url else url
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(target, headers=headers, timeout=15)
-        
+        resp = requests.get(target, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         if resp.status_code == 200:
-            return Image.open(BytesIO(resp.content)).convert("RGBA")
+            return resp.content
         return None
     except:
         return None
 
+def load_to_pil(data_source):
+    """Converts URLs or Base64 into a usable RGBA PIL Image."""
+    if not data_source: return None
+    try:
+        if data_source.startswith("data:image"):
+            _, encoded = data_source.split(",", 1)
+            return Image.open(BytesIO(base64.b64decode(encoded))).convert("RGBA")
+        
+        img_bytes = get_raw_bytes(data_source)
+        if img_bytes:
+            return Image.open(BytesIO(img_bytes)).convert("RGBA")
+    except:
+        return None
+    return None
+
 # ============================================================================
-# 3. INTERFACE & SIDEBAR
+# APP UI & SIDEBAR
 # ============================================================================
-st.set_page_config(page_title="Gemini Studio Pro", layout="wide")
+st.set_page_config(page_title="Gemini Design Studio", layout="wide")
 
 with st.sidebar:
     st.title("⚙️ Studio Controls")
-    q_input = st.text_input("Keywords", "Lion")
-    t_input = st.selectbox("Style Category", ["None", "animals", "graffiti", "typography", "reggae", "streetwear"])
+    q_input = st.text_input("Search Assets", "Lion")
+    t_input = st.selectbox("Style", ["None", "animals", "graffiti", "typography", "reggae", "streetwear"])
     
-    if st.button("🔍 Find Assets", use_container_width=True, type="primary"):
-        params = {"q": q_input, "limit": 36} # More results for the grid
+    if st.button("🔍 Search API", use_container_width=True, type="primary"):
+        params = {"q": q_input, "limit": 30}
         if t_input != "None": params["t"] = t_input
-        try:
-            r = requests.get(f"{API_URL}/api/search", params=params)
-            if r.status_code == 200:
-                data = r.json()
-                st.session_state.results = data.get("results", {}).get("assets", [])
-                st.session_state.chips = data.get("suggestions", {}).get("keywords", [])
-        except:
-            st.error("Search API is currently unavailable.")
+        r = requests.get(f"{API_URL}/api/search", params=params)
+        if r.status_code == 200:
+            data = r.json()
+            st.session_state.results = data.get("results", {}).get("assets", [])
+            st.session_state.chips = data.get("suggestions", {}).get("keywords", [])
 
-    # SIDEBAR: Keyword Chips
-    if "chips" in st.session_state and st.session_state.chips:
+    if "chips" in st.session_state:
         st.divider()
-        st.subheader("✨ Keyword Suggestions")
-        for sug in st.session_state.chips[:12]:
+        st.subheader("✨ Suggestions")
+        for sug in st.session_state.chips[:10]:
             if st.button(f"#{sug['keyword']}", key=f"s_{sug['keyword']}", use_container_width=True):
-                st.toast(f"Try searching: {sug['keyword']}")
+                st.toast(f"Try searching '{sug['keyword']}'")
 
 # ============================================================================
-# 4. MAIN TABS
+# MAIN TABS
 # ============================================================================
-tab_discovery, tab_canvas = st.tabs(["🖼️ Asset Discovery", "👕 Design Canvas"])
+tab_grid, tab_design = st.tabs(["🖼️ Asset Discovery", "👕 Design Canvas"])
 
 # --- DISCOVERY TAB ---
-with tab_discovery:
+with tab_grid:
     if "results" in st.session_state:
         cols = st.columns(6)
         for idx, item in enumerate(st.session_state.results):
             with cols[idx % 6]:
-                # Fix Protocol for display
+                # Fix display URL
                 t_url = item.get("thumbnail_src", "")
                 if t_url.startswith("//"): t_url = "https:" + t_url
-                
                 st.image(t_url, use_container_width=True)
                 
-                # Double Action Buttons
                 c1, c2 = st.columns(2)
-                if c1.button("➕", key=f"sel_{idx}", help="Select for Canvas"):
+                if c1.button("➕", key=f"sel_{idx}", help="Send to Canvas"):
                     st.session_state.active_graphic = item.get("img_url")
-                    st.toast("Loaded to Canvas!")
+                    st.toast("Graphic Added to Design Tab!")
                 
-                d_url = item.get("img_url", "")
-                if d_url.startswith("//"): d_url = "https:" + d_url
-                c2.download_button("💾", data=d_url, key=f"dl_{idx}", help="Download Separately")
+                # FIXED DOWNLOAD: Fetching bytes first
+                raw_url = item.get("img_url", "")
+                if raw_url:
+                    asset_bytes = get_raw_bytes(raw_url)
+                    if asset_bytes:
+                        c2.download_button("💾", data=asset_bytes, file_name=f"asset_{idx}.png")
 
-# --- CANVAS TAB ---
-with tab_canvas:
+# --- DESIGN TAB ---
+with tab_design:
     tool_col, view_col = st.columns([1, 2.5])
     
     with tool_col:
@@ -117,59 +119,54 @@ with tab_canvas:
         
         st.divider()
         st.subheader("2. Upload Own")
-        uploaded_file = st.file_uploader("Drop PNG/JPG Logo", type=["png", "jpg", "jpeg"])
-        if uploaded_file:
-            encoded = base64.b64encode(uploaded_file.read()).decode()
-            st.session_state.active_graphic = f"data:image/png;base64,{encoded}"
+        up_file = st.file_uploader("PNG/JPG", type=["png", "jpg", "jpeg"])
+        if up_file:
+            st.session_state.active_graphic = f"data:image/png;base64,{base64.b64encode(up_file.read()).decode()}"
 
         st.divider()
-        st.subheader("3. Graphic Controls")
-        g_scale = st.slider("Scale", 0.1, 1.5, 0.5)
-        g_x = st.slider("X Position", 0, BASE_SIZE, BASE_SIZE//2)
-        g_y = st.slider("Y Position", 0, BASE_SIZE, BASE_SIZE//2)
+        st.subheader("3. Placement")
+        g_scale = st.slider("Size", 0.1, 1.5, 0.5)
+        g_x = st.slider("Horizontal (X)", 0, BASE_SIZE, BASE_SIZE//2)
+        g_y = st.slider("Vertical (Y)", 0, BASE_SIZE, 800)
 
         st.divider()
-        st.subheader("4. Text Layer")
-        user_text = st.text_input("Shirt Text", "")
-        t_size = st.slider("Font Size", 20, 500, 100)
-        t_x = st.slider("Text X", 0, BASE_SIZE, BASE_SIZE//2)
-        t_y = st.slider("Text Y", 0, BASE_SIZE, 600)
-        t_color = st.color_picker("Text Color", "#000000")
+        st.subheader("4. Text")
+        txt = st.text_input("Jersey Text", "")
+        txt_size = st.slider("Font Size", 20, 400, 100)
+        txt_x = st.slider("Text X", 0, BASE_SIZE, BASE_SIZE//2)
+        txt_y = st.slider("Text Y", 0, BASE_SIZE, 500)
+        txt_color = st.color_picker("Text Color", "#000000")
 
     with view_col:
-        # Load the base image (Mockup or Empty Canvas)
-        canvas = get_img(MOCKUPS[base_choice])
+        # Load Base (2000x2000)
+        canvas = load_to_pil(MOCKUPS[base_choice])
         
         if canvas:
-            # Force size to 2000x2000 for standard design math
             canvas = canvas.resize((BASE_SIZE, BASE_SIZE), Image.LANCZOS)
             draw = ImageDraw.Draw(canvas)
 
-            # LAYER 1: GRAPHIC OVERLAY
+            # LAYER 1: GRAPHIC (With Alpha Mask Fix)
             if "active_graphic" in st.session_state:
-                overlay = get_img(st.session_state.active_graphic)
+                overlay = load_to_pil(st.session_state.active_graphic)
                 if overlay:
-                    # Scaling logic (Maintains aspect ratio)
-                    new_w = int(BASE_SIZE * g_scale)
-                    new_h = int(overlay.height * (new_w / overlay.width))
-                    overlay = overlay.resize((new_w, new_h), Image.LANCZOS)
-                    # Paste centered on sliders
-                    canvas.paste(overlay, (g_x - new_w//2, g_y - new_h//2), overlay)
+                    w = int(BASE_SIZE * g_scale)
+                    h = int(overlay.height * (w / overlay.width))
+                    overlay = overlay.resize((w, h), Image.LANCZOS)
+                    # The mask (3rd param) is what makes it visible/transparent correctly
+                    canvas.paste(overlay, (g_x - w//2, g_y - h//2), overlay)
 
-            # LAYER 2: TEXT OVERLAY
-            if user_text:
+            # LAYER 2: TEXT
+            if txt:
                 try:
-                    # Uses font_size parameter supported in newer Pillow
-                    draw.text((t_x, t_y), user_text, fill=t_color, anchor="mm", font_size=t_size)
+                    draw.text((txt_x, txt_y), txt, fill=txt_color, anchor="mm", font_size=txt_size)
                 except:
-                    # Basic fallback if Pillow version is older
-                    draw.text((t_x, t_y), user_text, fill=t_color, anchor="mm")
+                    draw.text((txt_x, txt_y), txt, fill=txt_color, anchor="mm")
 
-            st.image(canvas, use_container_width=True, caption=f"Studio Render: {base_choice}")
+            st.image(canvas, use_container_width=True, caption="2000x2000 Production Preview")
             
-            # EXPORT BUTTON
+            # DOWNLOAD FINAL DESIGN
             buf = BytesIO()
             canvas.save(buf, format="PNG")
-            st.download_button("💾 Download Design", buf.getvalue(), "gemini_export.png", use_container_width=True)
+            st.download_button("💾 Download Finished Design", buf.getvalue(), "mockup_final.png", use_container_width=True)
         else:
-            st.error("Error: The base template could not be loaded. Check your worker proxy.")
+            st.warning("Please select an asset or refresh the page to load the canvas.")
