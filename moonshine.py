@@ -4,172 +4,117 @@ import base64
 from PIL import Image, ImageDraw
 from io import BytesIO
 
-# ============================================================================
-# 1. CONFIGURATION
-# ============================================================================
-API_URL = "https://moon-shine.vercel.app"
+# --- CONFIG ---
 CORS_PROXY = "https://cors.ericmwangi13.workers.dev/?url="
 BASE_SIZE = 2000 
 
-# Mockup Dictionary: "Empty Canvas" triggers a native Pillow generation
 MOCKUPS = {
-    "Empty Canvas": "INTERNAL_PILLOW",
+    "Empty Canvas": "INTERNAL",
     "Premium Black Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_premium%20black%20t%20shirt%20mockup_18848206.png",
     "Standard Black Shirt": "https://ik.imagekit.io/ericmwangi/tshtblck.png",
     "Realistic White Shirt": "https://ik.imagekit.io/ericmwangi/_Pngtree_realistic%20white%20t%20shirt%20vector_8963503.png"
 }
 
-# ============================================================================
-# 2. IMAGE ENGINE (HANDLES URLS, BYTES, AND NATIVE GENERATION)
-# ============================================================================
-
-def clean_url(url):
-    """Fixes // protocols and applies proxy for external links."""
-    if not url or url == "INTERNAL_PILLOW": return None
+# --- CORE ENGINE ---
+def get_raw_data(url):
+    """Fetches binary data directly. Fixes the download/loading issues."""
+    if not url or url == "INTERNAL": return None
     u = str(url).strip()
-    if u.startswith("//"):
-        u = "https:" + u
-    if u.startswith("http") and CORS_PROXY not in u:
-        return f"{CORS_PROXY}{u}"
-    return u
-
-@st.cache_data(show_spinner=False)
-def fetch_bytes(url):
-    """Fetches raw image data. Cached to speed up slider interactions."""
-    target = clean_url(url)
-    if not target: return None
+    if u.startswith("//"): u = "https:" + u
+    target = f"{CORS_PROXY}{u}" if "http" in u and CORS_PROXY not in u else u
     try:
-        resp = requests.get(target, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        return resp.content if resp.status_code == 200 else None
-    except:
-        return None
+        r = requests.get(target, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        return r.content if r.status_code == 200 else None
+    except: return None
 
-def load_to_pil(source):
-    """Universal loader: Handles Local Base64, Remote URLs, and Pillow Native Canvas."""
-    if source == "INTERNAL_PILLOW":
-        # Generate a pure white 2000x2000 canvas internally
+def to_pil(source):
+    """RGBA conversion engine for both base layers and overlays."""
+    if source == "INTERNAL": 
         return Image.new("RGBA", (BASE_SIZE, BASE_SIZE), (255, 255, 255, 255))
-    
-    if not source: return None
     try:
         if source.startswith("data:image"):
-            _, encoded = source.split(",", 1)
-            return Image.open(BytesIO(base64.b64decode(encoded))).convert("RGBA")
-        
-        raw_data = fetch_bytes(source)
-        if raw_data:
-            # Pillow auto-detects format (PNG/JPG) from binary headers
-            return Image.open(BytesIO(raw_data)).convert("RGBA")
-    except:
-        return None
-    return None
+            return Image.open(BytesIO(base64.b64decode(source.split(",")[1]))).convert("RGBA")
+        data = get_raw_data(source)
+        return Image.open(BytesIO(data)).convert("RGBA") if data else None
+    except: return None
 
-# ============================================================================
-# 3. INTERFACE & STATE
-# ============================================================================
-st.set_page_config(layout="wide", page_title="Gemini Studio Pro")
+# --- UI STATE ---
+st.set_page_config(layout="wide")
+if "active_asset" not in st.session_state: st.session_state.active_asset = None
+if "pos_x" not in st.session_state: st.session_state.pos_x = 1000
+if "pos_y" not in st.session_state: st.session_state.pos_y = 1000
+if "results" not in st.session_state: st.session_state.results = []
 
-# Persistent state for the active graphic layer
-if "active_graphic" not in st.session_state:
-    st.session_state.active_graphic = None
-
+# --- SIDEBAR ---
 with st.sidebar:
-    st.title("⚙️ Studio Controls")
-    q_search = st.text_input("Asset Search", "Lion")
-    
-    if st.button("🔍 Search API", use_container_width=True, type="primary"):
-        try:
-            r = requests.get(f"{API_URL}/api/search", params={"q": q_search, "limit": 30})
-            if r.status_code == 200:
-                data = r.json()
-                st.session_state.results = data.get("results", {}).get("assets", [])
-                st.session_state.chips = data.get("suggestions", {}).get("keywords", [])
-        except:
-            st.error("Could not connect to API.")
+    st.title("Studio Controls")
+    q = st.text_input("Search Assets", "Lion")
+    if st.button("Search", use_container_width=True):
+        r = requests.get(f"https://moon-shine.vercel.app/api/search", params={"q": q, "limit": 24})
+        if r.status_code == 200:
+            st.session_state.results = r.json().get("results", {}).get("assets", [])
 
-    if "chips" in st.session_state:
-        st.divider()
-        st.subheader("✨ Suggestions")
-        for sug in st.session_state.chips[:8]:
-            if st.button(f"#{sug['keyword']}", key=f"s_{sug['keyword']}", use_container_width=True):
-                st.toast(f"Try searching '{sug['keyword']}'")
+# --- TABS ---
+t_grid, t_canvas = st.tabs(["Discovery", "Design Canvas"])
 
-# --- MAIN TABS ---
-tab_discovery, tab_design = st.tabs(["🖼️ Discovery", "👕 Design Canvas"])
-
-# TAB 1: ASSET DISCOVERY
-with tab_discovery:
-    if "results" in st.session_state:
+with t_grid:
+    if st.session_state.results:
         cols = st.columns(6)
-        for idx, item in enumerate(st.session_state.results):
-            with cols[idx % 6]:
-                # Visual preview fix for browser
-                t_prev = clean_url(item["thumbnail_src"])
-                st.image(t_prev, use_container_width=True)
+        for i, item in enumerate(st.session_state.results):
+            with cols[i % 6]:
+                # Thumbnail preview fix
+                thumb = item["thumbnail_src"]
+                if thumb.startswith("//"): thumb = "https:" + thumb
+                st.image(thumb, use_container_width=True)
                 
                 c1, c2 = st.columns(2)
-                if c1.button("➕", key=f"sel_{idx}", help="Select for Design"):
-                    st.session_state.active_graphic = item["img_url"]
-                    st.toast("Logo added to Design Tab!")
+                if c1.button("➕", key=f"a_{i}"): 
+                    st.session_state.active_asset = item["img_url"]
                 
-                # Direct byte-download fix
-                asset_bytes = fetch_bytes(item["img_url"])
-                if asset_bytes:
-                    c2.download_button("💾", data=asset_bytes, file_name=f"asset_{idx}.png", key=f"dl_{idx}")
+                # ACTUAL DOWNLOAD (Binary data)
+                asset_data = get_raw_data(item["img_url"])
+                if asset_data:
+                    c2.download_button("💾", asset_data, f"asset_{i}.png", key=f"d_{i}")
 
-# TAB 2: DESIGN CANVAS
-with tab_design:
-    tool_col, view_col = st.columns([1, 2.5])
-    
-    with tool_col:
-        st.subheader("1. Template")
-        base_choice = st.selectbox("Mockup Base", list(MOCKUPS.keys()), index=0)
+with t_canvas:
+    ctrl, view = st.columns([1, 2.5])
+    with ctrl:
+        mockup_choice = st.selectbox("Mockup Base", list(MOCKUPS.keys()))
+        scale = st.slider("Asset Scale", 0.1, 2.0, 0.5)
+        st.session_state.pos_x = st.slider("X Position", 0, 2000, st.session_state.pos_x)
+        st.session_state.pos_y = st.slider("Y Position", 0, 2000, st.session_state.pos_y)
         
-        st.divider()
-        st.subheader("2. Controls")
-        g_scale = st.slider("Scale Logo", 0.1, 1.5, 0.5)
-        g_x = st.slider("X Position", 0, BASE_SIZE, BASE_SIZE // 2)
-        g_y = st.slider("Y Position", 0, BASE_SIZE, 850)
-        
-        st.divider()
-        st.subheader("3. Text Layer")
-        user_txt = st.text_input("Jersey Text", "")
-        txt_color = st.color_picker("Text Color", "#000000")
+        txt_input = st.text_input("Design Text")
+        txt_col = st.color_picker("Text Color", "#000000")
         
         if st.button("🔄 Center All", use_container_width=True):
-            st.toast("Snap to center applied!")
+            st.session_state.pos_x, st.session_state.pos_y = 1000, 1000
+            st.rerun()
 
-    with view_col:
-        # STEP A: Create/Load Base Canvas
-        canvas_pil = load_to_pil(MOCKUPS[base_choice])
-        
-        if canvas_pil:
-            # Resize base to 2000x2000 standard
-            canvas = canvas_pil.resize((BASE_SIZE, BASE_SIZE), Image.LANCZOS)
+    with view:
+        # 1. Base Mockup Layer
+        canvas = to_pil(MOCKUPS[mockup_choice])
+        if canvas:
+            canvas = canvas.resize((BASE_SIZE, BASE_SIZE), Image.LANCZOS)
             
-            # STEP B: Layer Graphic with Alpha Mask (Fixes "Invisible" issue)
-            if st.session_state.active_graphic:
-                overlay = load_to_pil(st.session_state.active_graphic)
+            # 2. Asset Layer (The Alpha Mask Fix)
+            if st.session_state.active_asset:
+                overlay = to_pil(st.session_state.active_asset)
                 if overlay:
-                    # Calculate new size while maintaining aspect ratio
-                    new_w = int(BASE_SIZE * g_scale)
-                    new_h = int(overlay.height * (new_w / overlay.width))
-                    overlay = overlay.resize((new_w, new_h), Image.LANCZOS)
-                    # PASTE: (Image, Position, Mask) - Mask is what enables transparency
-                    canvas.paste(overlay, (g_x - new_w // 2, g_y - new_h // 2), overlay)
-
-            # STEP C: Layer Text
-            if user_txt:
-                draw = ImageDraw.Draw(canvas)
-                # Position text relative to graphic for better layout
-                draw.text((g_x, g_y - 250), user_txt, fill=txt_color, anchor="mm", font_size=120)
-
-            # RENDER PREVIEW
-            st.image(canvas, use_container_width=True, caption=f"2000x2000 {base_choice}")
+                    w = int(BASE_SIZE * scale)
+                    h = int(overlay.height * (w / overlay.width))
+                    overlay = overlay.resize((w, h), Image.LANCZOS)
+                    # PASTE: Image, Box, Mask (Mask = Transparency)
+                    canvas.paste(overlay, (st.session_state.pos_x - w//2, st.session_state.pos_y - h//2), overlay)
             
-            # EXPORT FINAL PNG
-            export_io = BytesIO()
-            canvas.save(export_io, format="PNG")
-            st.download_button("💾 Download High-Res Design", export_io.getvalue(), "final_design.png", use_container_width=True)
-        else:
-            st.error("Canvas failed to load. Please refresh or try another base.")
+            # 3. Text Layer
+            if txt_input:
+                draw = ImageDraw.Draw(canvas)
+                draw.text((st.session_state.pos_x, st.session_state.pos_y - 250), txt_input, fill=txt_col, anchor="mm", font_size=120)
+            
+            # PREVIEW & FINAL EXPORT
+            st.image(canvas, use_container_width=True)
+            
+            final_buf = BytesIO()
+            canvas.save(final_buf, format="PNG")
+            st.download_button("Download High-Res Design", final_buf.getvalue(), "final_design.png", use_container_width=True)
